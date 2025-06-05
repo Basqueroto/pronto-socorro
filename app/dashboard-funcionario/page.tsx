@@ -51,6 +51,8 @@ import {
   markReevaluationAsSeen,
   type Patient,
 } from "@/lib/patient-service"
+import { getAllStaff, deleteStaff, type Staff, updateStaff } from "@/lib/staff-service"
+import { isClient } from "@/lib/utils"
 
 // Interface para os tempos do protocolo de Manchester
 interface ManchesterTimes {
@@ -71,6 +73,12 @@ export default function DashboardFuncionarioPage() {
   const [reevaluationPatient, setReevaluationPatient] = useState<Patient | null>(null)
   const [isReevaluationDialogOpen, setIsReevaluationDialogOpen] = useState(false)
   const [hasNewReevaluationRequests, setHasNewReevaluationRequests] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  const [staff, setStaff] = useState<Staff[]>([])
+  const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isEditStaffDialogOpen, setIsEditStaffDialogOpen] = useState(false)
+  const [editedStaff, setEditedStaff] = useState<Partial<Staff>>({})
 
   // Referência para o elemento de download
   const downloadLinkRef = useRef<HTMLAnchorElement>(null)
@@ -95,8 +103,15 @@ export default function DashboardFuncionarioPage() {
     alta: { Vermelho: 0, Laranja: 0, Amarelo: 0, Verde: 0, Azul: 0 },
   }
 
+  // Garantir que o componente só renderize completamente no cliente
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   // Verificar se o funcionário está autenticado
   useEffect(() => {
+    if (!isClient()) return
+
     if (!isStaffAuthenticated()) {
       router.push("/login-funcionario")
     } else {
@@ -108,13 +123,20 @@ export default function DashboardFuncionarioPage() {
 
       // Carregar pacientes arquivados
       loadArchivedPatients()
+
+      // Carregar funcionários se for admin
+      if (getCurrentStaffRole() === "admin") {
+        loadStaff()
+      }
     }
-  }, [router])
+  }, [router, mounted])
 
   // Função para carregar pacientes do banco de dados
-  const loadPatients = () => {
+  const loadPatients = async () => {
+    if (!isClient()) return
+
     try {
-      const allPatients = getAllPatients()
+      const allPatients = await getAllPatients()
       setPatients(allPatients)
 
       // Verificar se há novos pedidos de reavaliação
@@ -128,17 +150,33 @@ export default function DashboardFuncionarioPage() {
   }
 
   // Função para carregar pacientes arquivados
-  const loadArchivedPatients = () => {
+  const loadArchivedPatients = async () => {
+    if (!isClient()) return
+
     try {
-      const archived = getAllArchivedPatients()
+      const archived = await getAllArchivedPatients()
       setArchivedPatients(archived)
     } catch (error) {
       console.error("Erro ao carregar pacientes arquivados:", error)
     }
   }
 
+  // Função para carregar funcionários do banco de dados
+  const loadStaff = async () => {
+    if (!isClient()) return
+
+    try {
+      const allStaff = await getAllStaff()
+      setStaff(allStaff)
+    } catch (error) {
+      console.error("Erro ao carregar funcionários:", error)
+    }
+  }
+
   // Atualizar o relógio a cada segundo
   useEffect(() => {
+    if (!isClient()) return
+
     const timer = setInterval(() => {
       setCurrentTime(new Date())
     }, 1000)
@@ -190,10 +228,32 @@ export default function DashboardFuncionarioPage() {
     return manchesterWaitTimes[patient.currentStep]?.[patient.priority] || 0
   }
 
-  // Função para atualizar a lista de pacientes
+  // Função para excluir um funcionário
+  const handleDeleteStaff = (staff: Staff) => {
+    setSelectedStaff(staff)
+    setIsDeleteDialogOpen(true)
+  }
+
+  // Função para confirmar a exclusão do funcionário
+  const confirmDeleteStaff = async () => {
+    if (!selectedStaff) return
+
+    // Excluir funcionário do banco de dados
+    await deleteStaff(selectedStaff.id)
+
+    // Atualizar a lista de funcionários
+    loadStaff()
+
+    setIsDeleteDialogOpen(false)
+  }
+
+  // Função para atualizar as listas
   const handleRefresh = () => {
     loadPatients()
     loadArchivedPatients()
+    if (staffRole === "admin") {
+      loadStaff()
+    }
   }
 
   // Função para abrir o diálogo de edição do paciente
@@ -214,18 +274,16 @@ export default function DashboardFuncionarioPage() {
 
       // Marcar como visto
       if (!patient.reevaluationRequest.seen) {
-        const updatedPatient = markReevaluationAsSeen(patient.id)
-
-        if (updatedPatient) {
+        markReevaluationAsSeen(patient.id).then(() => {
           // Atualizar a lista de pacientes
           loadPatients()
-        }
+        })
       }
     }
   }
 
   // Função para salvar as alterações do paciente
-  const handleSavePatient = () => {
+  const handleSavePatient = async () => {
     if (!selectedPatient || !editedPatient) return
 
     // Criar objeto atualizado do paciente
@@ -236,7 +294,7 @@ export default function DashboardFuncionarioPage() {
     } as Patient
 
     // Atualizar o paciente no banco de dados
-    updatePatient(patientToUpdate)
+    await updatePatient(patientToUpdate)
 
     // Atualizar a lista de pacientes
     loadPatients()
@@ -250,9 +308,9 @@ export default function DashboardFuncionarioPage() {
   }
 
   // Função para arquivar um paciente
-  const archivePatient = (patient: Patient) => {
+  const archivePatient = async (patient: Patient) => {
     // Arquivar paciente no banco de dados
-    archivePatientService(patient)
+    await archivePatientService(patient)
 
     // Atualizar as listas
     loadPatients()
@@ -341,6 +399,38 @@ export default function DashboardFuncionarioPage() {
     return `${Math.round(totalMinutes / patients.length)} min`
   }
 
+  // Adicionar função para abrir o diálogo de edição de funcionário
+  const handleEditStaff = (staffMember: Staff) => {
+    setSelectedStaff(staffMember)
+    setEditedStaff({
+      ...staffMember,
+    })
+    setIsEditStaffDialogOpen(true)
+  }
+
+  // Adicionar função para salvar as alterações do funcionário
+  const handleSaveStaff = async () => {
+    if (!selectedStaff || !editedStaff) return
+
+    // Criar objeto atualizado do funcionário
+    const staffToUpdate: Staff = {
+      ...selectedStaff,
+      ...editedStaff,
+    } as Staff
+
+    // Atualizar o funcionário no banco de dados
+    await updateStaff(staffToUpdate)
+
+    // Atualizar a lista de funcionários
+    loadStaff()
+
+    setIsEditStaffDialogOpen(false)
+  }
+
+  if (!mounted) {
+    return <div className="flex justify-center items-center min-h-screen">Carregando...</div>
+  }
+
   if (!isAuthenticated) {
     return <div className="flex justify-center items-center min-h-screen">Carregando...</div>
   }
@@ -354,7 +444,6 @@ export default function DashboardFuncionarioPage() {
             <h1 className="text-xl md:text-2xl font-bold">Pronto-Socorro de Birigui - Área do Funcionário</h1>
           </div>
           <div className="flex items-center">
-            <ClockComponent startTime={new Date()} className="text-sm mr-4 font-mono" />
             <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-blue-200">
               <LogOut className="h-4 w-4 mr-2" />
               Sair
@@ -362,6 +451,35 @@ export default function DashboardFuncionarioPage() {
           </div>
         </div>
       </header>
+
+      {hasNewReevaluationRequests && (
+        <div className="bg-red-50 border-b border-red-200 py-2">
+          <div className="container mx-auto flex items-center justify-between">
+            <div className="flex items-center">
+              <Bell className="h-5 w-5 text-red-600 mr-2" />
+              <span className="text-red-700 font-medium">
+                {reevaluationRequestsCount}{" "}
+                {reevaluationRequestsCount === 1 ? "paciente solicitou" : "pacientes solicitaram"} reavaliação
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-300 text-red-700 hover:bg-red-100"
+              onClick={() => {
+                const patientWithReevaluation = patients.find(
+                  (p) => p.reevaluationRequest?.requested && !p.reevaluationRequest?.seen,
+                )
+                if (patientWithReevaluation) {
+                  handleViewReevaluation(patientWithReevaluation)
+                }
+              }}
+            >
+              Ver solicitações
+            </Button>
+          </div>
+        </div>
+      )}
 
       <main className="container mx-auto p-4 space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
@@ -373,31 +491,16 @@ export default function DashboardFuncionarioPage() {
           </div>
 
           <div className="flex gap-2">
-            {hasNewReevaluationRequests && (
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  const patientWithReevaluation = patients.find(
-                    (p) => p.reevaluationRequest?.requested && !p.reevaluationRequest?.seen,
-                  )
-                  if (patientWithReevaluation) {
-                    handleViewReevaluation(patientWithReevaluation)
-                  }
-                }}
-              >
-                <Bell className="h-4 w-4 mr-2" />
-                {reevaluationRequestsCount > 0 && (
-                  <span className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
-                    {reevaluationRequestsCount}
-                  </span>
-                )}
-                Reavaliações
-              </Button>
-            )}
             <Button onClick={() => router.push("/cadastro-paciente")} className="bg-blue-600 hover:bg-blue-700">
               <UserPlus className="h-4 w-4 mr-2" />
               Novo Paciente
             </Button>
+            {staffRole === "admin" && (
+              <Button onClick={() => router.push("/cadastro-funcionario")} className="bg-blue-800 hover:bg-blue-900">
+                <UserCog className="h-4 w-4 mr-2" />
+                Novo Funcionário
+              </Button>
+            )}
             <Button variant="outline" className="border-blue-200 text-blue-700" onClick={handleRefresh}>
               <RefreshCcw className="h-4 w-4 mr-2" />
               Atualizar
@@ -467,6 +570,7 @@ export default function DashboardFuncionarioPage() {
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="arquivados">Arquivados</TabsTrigger>
+                {staffRole === "admin" && <TabsTrigger value="funcionarios">Funcionários</TabsTrigger>}
               </TabsList>
 
               <div className="relative w-full md:w-64">
@@ -851,6 +955,92 @@ export default function DashboardFuncionarioPage() {
                 </div>
               </div>
             </TabsContent>
+            {staffRole === "admin" && (
+              <TabsContent value="funcionarios" className="mt-0">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-medium">Gerenciamento de Funcionários</h3>
+                  <Button
+                    onClick={() => router.push("/cadastro-funcionario")}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <UserPlus className="h-4 w-4 mr-2" />
+                    Novo Funcionário
+                  </Button>
+                </div>
+                <div className="rounded-md border">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          <th className="py-3 px-4 text-left font-medium">ID</th>
+                          <th className="py-3 px-4 text-left font-medium">Nome</th>
+                          <th className="py-3 px-4 text-left font-medium">Usuário</th>
+                          <th className="py-3 px-4 text-left font-medium">Cargo</th>
+                          <th className="py-3 px-4 text-left font-medium">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staff.length > 0 ? (
+                          staff.map((staffMember) => (
+                            <tr key={staffMember.id} className="border-t hover:bg-muted/50">
+                              <td className="py-3 px-4">{staffMember.id}</td>
+                              <td className="py-3 px-4 font-medium">{staffMember.name}</td>
+                              <td className="py-3 px-4">{staffMember.username}</td>
+                              <td className="py-3 px-4 capitalize">{staffMember.role}</td>
+                              <td className="py-3 px-4">
+                                <div className="flex space-x-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                    onClick={() => handleEditStaff(staffMember)}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                    <span className="sr-only">Editar</span>
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                    onClick={() => handleDeleteStaff(staffMember)}
+                                    disabled={staffMember.username === "admin"} // Impedir exclusão do admin principal
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="16"
+                                      height="16"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                                      <line x1="10" y1="11" x2="10" y2="17"></line>
+                                      <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                    <span className="sr-only">Excluir</span>
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                              Nenhum funcionário encontrado
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </main>
@@ -999,6 +1189,109 @@ export default function DashboardFuncionarioPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* Diálogo de confirmação de exclusão de funcionário */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Funcionário</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o funcionário <strong>{selectedStaff?.name}</strong>? Esta ação não pode
+              ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteStaff} className="bg-red-600 hover:bg-red-700 text-white">
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* Diálogo de edição de funcionário */}
+      <Dialog open={isEditStaffDialogOpen} onOpenChange={setIsEditStaffDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Funcionário</DialogTitle>
+            <DialogDescription>Atualize as informações do funcionário {selectedStaff?.name}</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="staff-id" className="text-right">
+                ID
+              </Label>
+              <Input id="staff-id" value={selectedStaff?.id || ""} className="col-span-3" disabled />
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="staff-name" className="text-right">
+                Nome
+              </Label>
+              <Input
+                id="staff-name"
+                value={editedStaff.name || ""}
+                onChange={(e) => setEditedStaff({ ...editedStaff, name: e.target.value })}
+                className="col-span-3"
+              />
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="staff-username" className="text-right">
+                Usuário
+              </Label>
+              <Input
+                id="staff-username"
+                value={editedStaff.username || ""}
+                onChange={(e) => setEditedStaff({ ...editedStaff, username: e.target.value })}
+                className="col-span-3"
+                disabled={selectedStaff?.username === "admin"} // Impedir edição do usuário admin
+              />
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="staff-password" className="text-right">
+                Nova Senha
+              </Label>
+              <Input
+                id="staff-password"
+                type="password"
+                placeholder="Digite para alterar a senha"
+                onChange={(e) => setEditedStaff({ ...editedStaff, password: e.target.value })}
+                className="col-span-3"
+              />
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="staff-role" className="text-right">
+                Cargo
+              </Label>
+              <Select
+                value={editedStaff.role}
+                onValueChange={(value) =>
+                  setEditedStaff({ ...editedStaff, role: value as "medico" | "enfermeiro" | "admin" })
+                }
+                disabled={selectedStaff?.username === "admin"} // Impedir edição do cargo do admin
+              >
+                <SelectTrigger className="col-span-3">
+                  <SelectValue placeholder="Selecione o cargo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="medico">Médico</SelectItem>
+                  <SelectItem value="enfermeiro">Enfermeiro</SelectItem>
+                  <SelectItem value="admin">Administrador</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditStaffDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveStaff}>Salvar Alterações</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

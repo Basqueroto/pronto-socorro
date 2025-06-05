@@ -21,7 +21,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { isPatientAuthenticated, clearPatientSession, getCurrentPatientId } from "@/lib/auth"
-import { getPatientById, updatePatientStep, requestReevaluation } from "@/lib/patient-service"
+import { getPatientById, updatePatientStep, requestReevaluation } from "@/lib/patient-service-supabase"
+import { isClient } from "@/lib/utils"
 
 // Interface para os tempos do protocolo de Manchester
 interface ManchesterTimes {
@@ -40,6 +41,8 @@ export default function PatientProfilePage() {
   const [completedSteps, setCompletedSteps] = useState<string[]>([])
   const [isReevaluationDialogOpen, setIsReevaluationDialogOpen] = useState(false)
   const [reevaluationReason, setReevaluationReason] = useState("")
+  const [mounted, setMounted] = useState(false)
+  const [isSubmittingReevaluation, setIsSubmittingReevaluation] = useState(false)
 
   // Etapas do atendimento
   const steps = [
@@ -61,8 +64,36 @@ export default function PatientProfilePage() {
     alta: { Vermelho: 0, Laranja: 0, Amarelo: 0, Verde: 0, Azul: 0 },
   }
 
+  // Garantir que o componente só renderize completamente no cliente
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Função para formatar a data
+  const formatDate = (date: Date | string | undefined) => {
+    if (!date) return "Data não disponível"
+
+    try {
+      const dateObj = typeof date === "string" ? new Date(date) : date
+      if (isNaN(dateObj.getTime())) return "Data inválida"
+
+      return dateObj.toLocaleString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    } catch (error) {
+      console.error("Erro ao formatar data:", error)
+      return "Data inválida"
+    }
+  }
+
   // Carregar dados do paciente
   useEffect(() => {
+    if (!isClient()) return
+
     const storedPatientId = getCurrentPatientId()
 
     // Verificar se o usuário está autenticado
@@ -72,20 +103,49 @@ export default function PatientProfilePage() {
     }
 
     // Buscar dados do paciente do banco de dados
-    const patientData = getPatientById(patientId)
+    const fetchPatient = async () => {
+      try {
+        const patientData = await getPatientById(patientId)
 
-    if (patientData) {
-      setPatient(patientData)
-      setCompletedSteps(patientData.completedSteps || [])
-    } else {
-      setError("Paciente não encontrado")
+        if (patientData) {
+          // Garantir que registeredAt seja um objeto Date
+          const processedPatient = {
+            ...patientData,
+            registeredAt:
+              typeof patientData.registeredAt === "string"
+                ? new Date(patientData.registeredAt)
+                : patientData.registeredAt,
+            reevaluationRequest: patientData.reevaluationRequest
+              ? {
+                  ...patientData.reevaluationRequest,
+                  timestamp:
+                    typeof patientData.reevaluationRequest.timestamp === "string"
+                      ? new Date(patientData.reevaluationRequest.timestamp)
+                      : patientData.reevaluationRequest.timestamp,
+                }
+              : undefined,
+          }
+
+          setPatient(processedPatient)
+          setCompletedSteps(processedPatient.completedSteps || [])
+        } else {
+          setError("Paciente não encontrado")
+        }
+      } catch (error) {
+        console.error("Erro ao buscar paciente:", error)
+        setError("Erro ao carregar dados do paciente")
+      }
+
+      setLoading(false)
     }
 
-    setLoading(false)
-  }, [patientId, router])
+    fetchPatient()
+  }, [patientId, router, mounted])
 
   // Atualizar o relógio a cada segundo
   useEffect(() => {
+    if (!isClient()) return
+
     const timer = setInterval(() => {
       setCurrentTime(new Date())
     }, 1000)
@@ -115,17 +175,6 @@ export default function PatientProfilePage() {
       default:
         return "bg-gray-100 text-gray-800 border-gray-200"
     }
-  }
-
-  // Função para formatar a data
-  const formatDate = (date: Date) => {
-    return date.toLocaleString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
   }
 
   // Calcular tempo de espera estimado
@@ -162,7 +211,7 @@ export default function PatientProfilePage() {
   }
 
   // Função para marcar uma etapa como concluída e atualizar o progresso
-  const toggleStepCompletion = (stepId: string) => {
+  const toggleStepCompletion = async (stepId: string) => {
     if (!patient) return
 
     // Verificar se a etapa já está concluída
@@ -204,25 +253,48 @@ export default function PatientProfilePage() {
     setCompletedSteps(updatedCompletedSteps)
 
     // Atualizar o paciente no banco de dados
-    const updatedPatient = updatePatientStep(patient.id, updatedCurrentStep, updatedCompletedSteps)
-
-    if (updatedPatient) {
-      setPatient(updatedPatient)
+    try {
+      const updatedPatient = await updatePatientStep(patient.id, updatedCurrentStep, updatedCompletedSteps)
+      if (updatedPatient) {
+        setPatient(updatedPatient)
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar etapa do paciente:", error)
     }
   }
 
   // Função para enviar pedido de reavaliação
-  const handleReevaluationRequest = () => {
+  const handleReevaluationRequest = async () => {
     if (!patient || !reevaluationReason.trim()) return
 
-    // Solicitar reavaliação usando o serviço
-    const updatedPatient = requestReevaluation(patient.id, reevaluationReason)
+    setIsSubmittingReevaluation(true)
+    try {
+      // Solicitar reavaliação usando o serviço
+      const updatedPatient = await requestReevaluation(patient.id, reevaluationReason)
 
-    if (updatedPatient) {
-      setPatient(updatedPatient)
-      setIsReevaluationDialogOpen(false)
-      setReevaluationReason("")
+      if (updatedPatient) {
+        setPatient(updatedPatient)
+        setIsReevaluationDialogOpen(false)
+        setReevaluationReason("")
+      } else {
+        // Se não conseguiu atualizar, mostrar mensagem de erro
+        setError("Não foi possível solicitar a reavaliação. Tente novamente.")
+      }
+    } catch (error) {
+      console.error("Erro ao solicitar reavaliação:", error)
+      setError("Erro ao solicitar reavaliação. Tente novamente.")
+    } finally {
+      setIsSubmittingReevaluation(false)
     }
+  }
+
+  // Não renderizar o conteúdo completo até que o componente esteja montado no cliente
+  if (!mounted) {
+    return (
+      <div className="patient-theme min-h-screen bg-gradient-to-b from-blue-50 to-white flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md text-center">Carregando...</div>
+      </div>
+    )
   }
 
   if (loading) {
@@ -257,7 +329,13 @@ export default function PatientProfilePage() {
             <h1 className="text-xl md:text-2xl font-bold">Pronto-Socorro de Birigui - Área do Paciente</h1>
           </div>
           <div className="flex items-center">
-            <ClockComponent startTime={new Date()} className="text-sm mr-4 font-mono" />
+            <div className="flex flex-col mr-4">
+              <span className="text-xs text-white/80">Tempo decorrido:</span>
+              <ClockComponent
+                startTime={patient.registeredAt instanceof Date ? patient.registeredAt : new Date(patient.registeredAt)}
+                className="text-sm font-mono"
+              />
+            </div>
             <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-blue-200">
               <LogOut className="h-4 w-4 mr-2" />
               Sair
@@ -389,12 +467,17 @@ export default function PatientProfilePage() {
               variant="destructive"
               className="w-full"
               onClick={() => setIsReevaluationDialogOpen(true)}
-              disabled={patient.reevaluationRequest?.requested && !patient.reevaluationRequest?.seen}
+              disabled={
+                (patient.reevaluationRequest?.requested && !patient.reevaluationRequest?.seen) ||
+                isSubmittingReevaluation
+              }
             >
               <AlertTriangle className="h-4 w-4 mr-2" />
               {patient.reevaluationRequest?.requested && !patient.reevaluationRequest?.seen
                 ? "Reavaliação solicitada"
-                : "Solicitar Reavaliação"}
+                : isSubmittingReevaluation
+                  ? "Enviando solicitação..."
+                  : "Solicitar Reavaliação"}
             </Button>
 
             {patient.reevaluationRequest?.requested && !patient.reevaluationRequest?.seen && (
@@ -404,6 +487,7 @@ export default function PatientProfilePage() {
             )}
           </div>
 
+          {/* Resto do código permanece igual... */}
           {/* Coluna da direita - Status do atendimento */}
           <div className="md:col-span-2 space-y-6">
             <Card>
@@ -437,9 +521,16 @@ export default function PatientProfilePage() {
                   <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
                     <h3 className="text-sm font-medium text-blue-800 mb-1">Tempo de Atendimento</h3>
                     <div className="flex justify-between">
-                      <ClockComponent startTime={patient.registeredAt} className="text-lg font-bold text-blue-700" />
                       <ClockComponent
-                        startTime={patient.registeredAt}
+                        startTime={
+                          patient.registeredAt instanceof Date ? patient.registeredAt : new Date(patient.registeredAt)
+                        }
+                        className="text-lg font-bold text-blue-700"
+                      />
+                      <ClockComponent
+                        startTime={
+                          patient.registeredAt instanceof Date ? patient.registeredAt : new Date(patient.registeredAt)
+                        }
                         estimatedDuration={getCurrentStepEstimatedTime()}
                         displayRemaining={true}
                         className="text-lg font-bold text-blue-700"
@@ -526,9 +617,12 @@ export default function PatientProfilePage() {
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleReevaluationRequest} disabled={!reevaluationReason.trim()}>
-              Enviar Solicitação
+            <AlertDialogCancel disabled={isSubmittingReevaluation}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleReevaluationRequest}
+              disabled={!reevaluationReason.trim() || isSubmittingReevaluation}
+            >
+              {isSubmittingReevaluation ? "Enviando..." : "Enviar Solicitação"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

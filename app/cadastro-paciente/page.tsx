@@ -9,14 +9,13 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { UserCog, ArrowLeft, AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { isStaffAuthenticated } from "@/lib/auth"
-import { registerPatient } from "@/lib/patient-service"
+import { registerPatient } from "@/lib/patient-service-supabase"
 
 // Esquema de validação do formulário
 const formSchema = z.object({
@@ -49,6 +48,8 @@ export default function CadastroPacientePage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSuccess, setIsSuccess] = useState(false)
   const [newPatientId, setNewPatientId] = useState("")
+  const [selectedPainLevel, setSelectedPainLevel] = useState("0")
+  const [hasEmergencySigns, setHasEmergencySigns] = useState(false)
 
   // Configuração do formulário com React Hook Form
   const form = useForm<FormValues>({
@@ -103,6 +104,21 @@ export default function CadastroPacientePage() {
   // Função para voltar ao dashboard
   const handleBack = () => {
     router.push("/dashboard-funcionario")
+  }
+
+  // Função para selecionar o nível de dor
+  const handlePainLevelSelect = (level: string) => {
+    setSelectedPainLevel(level)
+    form.setValue("painLevel", level)
+  }
+
+  // Função para alternar os sinais de emergência
+  const handleEmergencySignsToggle = (checked: boolean) => {
+    setHasEmergencySigns(checked)
+    form.setValue("hasEmergencySigns", checked)
+    if (checked) {
+      form.setValue("priority", "Vermelho")
+    }
   }
 
   if (!isAuthenticated) {
@@ -201,23 +217,33 @@ export default function CadastroPacientePage() {
 
                   <div className="space-y-2">
                     <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="emergency-signs"
-                        checked={form.getValues("hasEmergencySigns")}
-                        onCheckedChange={(checked) => {
-                          form.setValue("hasEmergencySigns", checked as boolean)
-                          if (checked) {
-                            form.setValue("priority", "Vermelho")
-                          }
-                        }}
-                      />
-                      <Label htmlFor="emergency-signs" className="text-red-600 font-medium">
+                      <div className="relative">
+                        <Checkbox
+                          id="emergency-signs"
+                          checked={hasEmergencySigns}
+                          onCheckedChange={(checked) => handleEmergencySignsToggle(!!checked)}
+                          className="h-6 w-6 border-2 border-red-400 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600"
+                        />
+                        {hasEmergencySigns && (
+                          <div className="absolute -top-2 -right-2 h-4 w-4 bg-red-500 rounded-full animate-pulse"></div>
+                        )}
+                      </div>
+                      <Label htmlFor="emergency-signs" className="text-red-600 font-medium flex items-center">
                         Sinais de emergência presentes
+                        {hasEmergencySigns && (
+                          <span className="ml-2 bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs">ATIVO</span>
+                        )}
                       </Label>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Marque se houver comprometimento de vias aéreas, respiração, circulação ou nível de consciência
                     </p>
+                    {hasEmergencySigns && (
+                      <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+                        Atenção: Ao marcar esta opção, o paciente será automaticamente classificado como prioridade
+                        VERMELHA (Emergência)
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -255,31 +281,43 @@ export default function CadastroPacientePage() {
 
                   <div className="space-y-2">
                     <Label>Nível de Dor (0-10)</Label>
-                    <RadioGroup
-                      defaultValue={form.getValues("painLevel")}
-                      onValueChange={(value) => form.setValue("painLevel", value)}
-                      className="flex flex-wrap gap-2"
-                    >
+                    <div className="flex flex-wrap gap-2">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((level) => (
-                        <div key={level} className="flex items-center">
-                          <RadioGroupItem value={level.toString()} id={`pain-${level}`} className="sr-only" />
-                          <Label
-                            htmlFor={`pain-${level}`}
-                            className={`h-10 w-10 rounded-full flex items-center justify-center cursor-pointer border ${
-                              form.getValues("painLevel") === level.toString()
-                                ? level >= 8
-                                  ? "bg-red-100 border-red-500 text-red-700"
-                                  : level >= 4
-                                    ? "bg-yellow-100 border-yellow-500 text-yellow-700"
-                                    : "bg-green-100 border-green-500 text-green-700"
-                                : "bg-gray-50 border-gray-200 hover:bg-gray-100"
-                            }`}
-                          >
-                            {level}
-                          </Label>
-                        </div>
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={() => handlePainLevelSelect(level.toString())}
+                          className={`h-12 w-12 rounded-full flex items-center justify-center cursor-pointer border-2 transition-all ${
+                            selectedPainLevel === level.toString()
+                              ? level >= 8
+                                ? "bg-red-500 border-red-700 text-white font-bold shadow-md shadow-red-200 scale-110"
+                                : level >= 4
+                                  ? "bg-yellow-500 border-yellow-700 text-white font-bold shadow-md shadow-yellow-200 scale-110"
+                                  : "bg-green-500 border-green-700 text-white font-bold shadow-md shadow-green-200 scale-110"
+                              : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                          }`}
+                        >
+                          {level}
+                          {selectedPainLevel === level.toString() && (
+                            <span className="absolute -top-1 -right-1 h-4 w-4 bg-blue-500 rounded-full"></span>
+                          )}
+                        </button>
                       ))}
-                    </RadioGroup>
+                    </div>
+                    <div className="mt-2 text-sm">
+                      Nível selecionado:{" "}
+                      <span
+                        className={`font-bold ${
+                          Number.parseInt(selectedPainLevel) >= 8
+                            ? "text-red-600"
+                            : Number.parseInt(selectedPainLevel) >= 4
+                              ? "text-yellow-600"
+                              : "text-green-600"
+                        }`}
+                      >
+                        {selectedPainLevel}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -299,7 +337,7 @@ export default function CadastroPacientePage() {
                   <div className="space-y-2">
                     <Label htmlFor="priority">Classificação de Risco</Label>
                     <Select
-                      defaultValue={form.getValues("priority")}
+                      value={form.getValues("priority")}
                       onValueChange={(value) =>
                         form.setValue("priority", value as "Vermelho" | "Laranja" | "Amarelo" | "Verde" | "Azul")
                       }

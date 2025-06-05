@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { UserRound, UserCog } from "lucide-react"
+import { DbStatusIndicator } from "@/components/db-status-indicator"
 
 export default function HomePage() {
   const router = useRouter()
@@ -14,6 +15,9 @@ export default function HomePage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-blue-800">Pronto-Socorro de Birigui</h1>
           <p className="text-blue-600 mt-2">Sistema de Gerenciamento e Acompanhamento</p>
+          <div className="mt-2 flex justify-center">
+            <DbStatusIndicator />
+          </div>
         </div>
 
         <Card className="border-2 border-blue-100 shadow-lg mb-6">

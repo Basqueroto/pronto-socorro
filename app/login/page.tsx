@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { useState, type FormEvent, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -15,6 +15,12 @@ export default function LoginPage() {
   const [patientId, setPatientId] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  // Garantir que o componente só renderize completamente no cliente
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -39,6 +45,15 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Não renderizar o conteúdo completo até que o componente esteja montado no cliente
+  if (!mounted) {
+    return (
+      <div className="patient-theme min-h-screen bg-gradient-to-b from-blue-50 to-white flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md text-center">Carregando...</div>
+      </div>
+    )
   }
 
   return (
